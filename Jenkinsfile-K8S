@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+
+    environment {
+        registry = "406115463729.dkr.ecr.ap-south-1.amazonaws.com/k8s-ecr-repo"
+        awsRegion = 'ap-south-1'
+    }
+
+    stages {
+        stage('Cloning Git') {
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: '', url: 'https://github.com/AbdulpMulla/demo-k8s-springboot-app']]])
+            }
+        }
+        
+        stage('Build') {
+            tools {
+                maven 'Maven3'
+            }
+            steps {
+                sh 'mvn clean install'
+            }
+        }
+
+        stage('Building image') {
+            steps {
+                script {
+                    dockerImage = docker.build registry
+                }
+            }
+        }
+
+        stage('Pushing to ECR') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'k8s-ecr-aws-access-cred',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        sh "aws ecr get-login-password --region ${awsRegion} | docker login --username AWS --password-stdin ${registry}"
+                        sh "docker tag k8s-ecr-repo:latest ${registry}:latest"
+                        sh "docker push ${registry}:latest"
+                    }
+                }
+            }
+        }
+
+        stage('K8S Deploy') {
+            steps {
+                script {
+                    withKubeConfig([credentialsId: 'kubeconfig', serverUrl: '']) {
+                        sh 'kubectl apply -f eks-deploy-k8s.yaml'
+                    }
+                }
+            }
+        }
+
+    }
+}
